@@ -1,4 +1,5 @@
-# Tunafish Python Function Autotuner
+# Tunafish
+## Autotune Python Functions
 Tunafish is an argument autotuner for plain ol' Python functions. Under the hood, it uses genetic algorithms to determine which arguments maximize a function's return value (it's fitness). Tunafish eliminates the need to think in terms of genetic algorithms so you can focus more on what matters: your code.
 
 To use Tunafish, you function must meet the following criteria:
