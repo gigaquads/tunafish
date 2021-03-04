@@ -37,3 +37,6 @@ arguments = tuner.tune(trade, options={
 Working examples can be found in `tunafish.examples`. The "basic" and "early_stopping" examples differ only in that "early_stopping" shows you how to control a bit more of the internals of the genetic algorithm. In particular, we tell it to exit the training loop early if we reach a fitness goal before all 500 epochs have run. Running these examples should generate a plot, showing convergence of fitness versus time.
 
 ![Max Fitness Per Epoch Graph](./docs/assets/fitness-per-epoch.png)
+
+### Running Examples
+Just do `python -m tunafish.examples.basic`!
