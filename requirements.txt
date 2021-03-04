@@ -1,5 +1,3 @@
-ravel
-appyratus
-
+numpy
+geap
 pytest
-ipdb
