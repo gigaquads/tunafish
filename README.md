@@ -5,7 +5,7 @@ Tunafish is an autotuner for plain ol' Python functions. Under the hood, it uses
 To use Tunafish, your objective function must satisfy the following two
 conditions:
 1. Arguments *must* be annotated as primitives types, like `float`,
-`int`, `str`, and `bool`, `typing.List`, etc.
+`int`, `str`, and `bool`, `typing.Text`, etc.
 2. The return value *must* be expressed as a single `float` (i.e. a fitness
 value).
 
