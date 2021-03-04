@@ -1,0 +1,74 @@
+---
+git_project:
+- embryo:
+    action: hatch
+    name: git_project
+    timestamp: 1614826417.449774
+  remote:
+    name: origin
+    path: git@lib.land:gigaquads/tunafish.git
+project/base:
+- embryo:
+    action: hatch
+    name: project/base
+    timestamp: 1614826138.777924
+  project:
+    description: ''
+    name: tunafish
+    version: 0.0.0
+python_project/base:
+- embryo:
+    action: hatch
+    name: python_project/base
+    timestamp: 1614826143.300116
+  project: {}
+python_project/package:
+- embryo:
+    action: hatch
+    name: python_project/package
+    timestamp: 1614826185.733658
+  package:
+    build: true
+    check: true
+    push: false
+    register: false
+    test: true
+- embryo:
+    action: hatch
+    name: python_project/package
+    timestamp: 1614826189.400879
+  package:
+    build: false
+    check: true
+    push: true
+    register: false
+    test: true
+- embryo:
+    action: hatch
+    name: python_project/package
+    timestamp: 1614826213.586928
+  package:
+    build: false
+    check: true
+    push: true
+    register: false
+    test: false
+python_project/setup:
+- config:
+    find_namespace_packages: false
+    find_packages: true
+    refresh_scripts: true
+  embryo:
+    action: hatch
+    name: python_project/setup
+    timestamp: 1614826145.56989
+  metadata:
+    classifiers: []
+    keywords: []
+  options:
+    dependency_links: []
+    install_requires: []
+    packages: []
+    scripts: []
+  project: {}
+...
