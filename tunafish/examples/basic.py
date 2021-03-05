@@ -1,9 +1,9 @@
 from tunafish import FunctionTuner
 
 
-def target(name: str, age: int, temperature: float, male: bool):
+def objective(name: str, age: int, temperature: float, male: bool):
     """
-    This is the "target" function whose output we're optimizing with
+    This is the "objective" function whose output we're optimizing with
     respect to the inputs. In other words, we're finding the inputs which
     maximize fitness (the output of the function).
     """
@@ -29,11 +29,14 @@ if __name__ == '__main__':
     }
 
     # NOTE: statistics False in production by default
-    tuner = FunctionTuner(statistics=True)
+    tuner = FunctionTuner(epochs=256, statistics=True)
 
     # returns top individual from latest generation
-    args = tuner.tune(target, options)
+    from appyratus.utils.time_utils import TimeUtils
 
-    print(args) 
+    args, time = TimeUtils.timed(lambda: tuner.tune(objective, options))
+
+    print(f'Runtime: {time.total_seconds():.2f}s')
+    print(f'Best Args:', args)
 
     tuner.plot()

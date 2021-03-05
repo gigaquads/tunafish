@@ -39,7 +39,7 @@ class GeneticAlgorithm:
         self.specs = specs
         self.probabilities = probabilities
         self.toolbox = deap.base.Toolbox()
-        self.target: Optional[Callable] = None
+        self.objective: Optional[Callable] = None
         self.are_statistics_enabled = statistics
         self.statistics = None
         self.setup()
@@ -89,17 +89,17 @@ class GeneticAlgorithm:
 
     def fit(
         self,
-        target: Callable[..., float],
+        objective: Callable[..., float],
         population: Union[int, Sequence] = 25,
         epochs: int = 50,
         goal: float = None,
     ) -> List[List]:
         """
         Generate argument list (or lists) which maximize the fitness (a
-        float) of the target function. The target function's output is
+        float) of the objective function. The objective function's output is
         expected to be its fitness.
         """
-        self.target = target
+        self.objective = objective
 
         # initialize a new statistics object
         if self.are_statistics_enabled:
@@ -216,9 +216,9 @@ class GeneticAlgorithm:
     def evaluate(self, individual: List) -> float:
         """
         Translate genetic algorithm individual into arguments with which to
-        call the target function (that we're optimizing), call it, and
+        call the objective function (that we're optimizing), call it, and
         return its fitness. This function is called internally by Geap.
         """
         args = Arguments.build(self.specs, individual)
-        args.fitness = self.target(*args) or 0.0
+        args.fitness = self.objective(*args) or 0.0
         return args.fitness or 0.0

@@ -34,18 +34,18 @@ class FunctionTuner:
 
     def tune(
         self,
-        target: Callable[..., float],
+        objective: Callable[..., float],
         options: Optional[Dict] = None,
         many: bool = False,
     ) -> Union[Arguments, List[Arguments]]:
         """
         Use a genetic algorithm to determine the best input arguments to the
-        target Python function, which maximize its return value -- that is,
+        objective Python function, which maximize its return value -- that is,
         it's fitness.
         """
         # build parameter specs, used in transforming geap output into
         # corresponding argument lists
-        signature = inspect.signature(target)
+        signature = inspect.signature(objective)
         for k, param in signature.parameters.items():
             spec = ParameterSpecification(param, options.get(k, {}))
             self.specs.append(spec)
@@ -58,7 +58,7 @@ class FunctionTuner:
             statistics=self.are_statistics_enabled
         )
         self.population = self.genetic_algorithm.fit(
-            target=target,
+            objective=objective,
             population=self.population,
             epochs=self.epochs,
             goal=self.goal,
