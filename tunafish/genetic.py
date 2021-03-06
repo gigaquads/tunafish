@@ -35,13 +35,16 @@ class GeneticAlgorithm:
         specs: List[ParameterSpecification],
         probabilities: Dict = DEFAULT_PROBABILITIES,
         statistics: bool = False,
+        use_kwargs: bool = False,
     ):
         self.specs = specs
+        self.keys = tuple(spec.name for spec in self.specs)
         self.probabilities = probabilities
         self.toolbox = deap.base.Toolbox()
         self.objective: Optional[Callable] = None
         self.are_statistics_enabled = statistics
         self.statistics = None
+        self.use_kwargs = use_kwargs
         self.setup()
 
     def setup(self):
@@ -122,6 +125,7 @@ class GeneticAlgorithm:
 
         # evolve the initial population....
         for epoch in range(epochs):
+            print(f'Epoch {epoch}...') # TODO: replace with custom callback
             # generate next population from previous
             # using tournament selection
             offspring = list(
@@ -220,5 +224,11 @@ class GeneticAlgorithm:
         return its fitness. This function is called internally by Geap.
         """
         args = Arguments.build(self.specs, individual)
-        args.fitness = self.objective(*args) or 0.0
-        return args.fitness or 0.0
+
+        if self.use_kwargs:
+            kwargs = dict(zip(self.keys, args))
+            args.fitness = self.objective(**kwargs) or 0.0
+        else:
+            args.fitness = self.objective(*args) or 0.0
+
+        return args.fitness

@@ -1,12 +1,17 @@
 import inspect
 
 from typing import Dict, List, Callable, Optional, Union
+from inspect import Parameter
 
 import numpy as np
 
 from .genetic import GeneticAlgorithm
 from .spec import ParameterSpecification
-from .arguments import Arguments
+from .arguments import Arguments, KeywordArguments
+
+VAR_POSITIONAL = Parameter.VAR_POSITIONAL
+VAR_KEYWORD = Parameter.VAR_KEYWORD
+POSITIONAL_ONLY = Parameter.POSITIONAL_ONLY
 
 
 class FunctionTuner:
@@ -36,8 +41,7 @@ class FunctionTuner:
         self,
         objective: Callable[..., float],
         options: Optional[Dict] = None,
-        many: bool = False,
-    ) -> Union[Arguments, List[Arguments]]:
+    ) -> Union[KeywordArguments, Arguments, List]:
         """
         Use a genetic algorithm to determine the best input arguments to the
         objective Python function, which maximize its return value -- that is,
@@ -46,16 +50,27 @@ class FunctionTuner:
         # build parameter specs, used in transforming geap output into
         # corresponding argument lists
         signature = inspect.signature(objective)
-        for k, param in signature.parameters.items():
-            spec = ParameterSpecification(param, options.get(k, {}))
-            self.specs.append(spec)
+        params = list(signature.parameters.values())
+        if len(params) == 1 and params[0].kind == VAR_KEYWORD:
+            use_kwargs = True
+            for k, v in options.items():
+                annotation = v.get('dtype', float)
+                param = Parameter(k, POSITIONAL_ONLY, annotation=annotation)
+                spec = ParameterSpecification(param, options.get(k, {}))
+                self.specs.append(spec)
+        else:
+            use_kwargs = False
+            for k, param in signature.parameters.items():
+                spec = ParameterSpecification(param, options.get(k, {}))
+                self.specs.append(spec)
 
         # run the genetic algorithm, returning optimial input args.
         # memoize them in case we want to resume tuning...
         self.genetic_algorithm = GeneticAlgorithm(
             specs=self.specs,
             probabilities=self.probabilities,
-            statistics=self.are_statistics_enabled
+            statistics=self.are_statistics_enabled,
+            use_kwargs=use_kwargs
         )
         self.population = self.genetic_algorithm.fit(
             objective=objective,
@@ -64,17 +79,25 @@ class FunctionTuner:
             goal=self.goal,
         )
         # convert lists of floats (the population) into argument tuples
-        arg_lists = [Arguments.build(self.specs, x) for x in self.population]
+        if use_kwargs:
+            results = [
+                KeywordArguments.build(self.specs, x)
+                for x in self.population
+            ]
+        else:
+            results = [
+                Arguments.build(self.specs, x)
+                for x in self.population
+            ]
 
-        self.winner = arg_lists[-1]
-        for args in reversed(arg_lists[:-1]):
-            if args.fitness > self.winner.fitness:
-                self.winner = args
+        self.winner = results[-1]
+        for x in reversed(results[:-1]):
+            if x.fitness > self.winner.fitness:
+                self.winner = x
 
-
-        # return the first individual (an argument tuple) from the final
+        # return the first individual (an argument tuple/dict) from the final
         # evolved population; otherwise, return the entire population.
-        return arg_lists if many else arg_lists[0]
+        return self.winner
 
     def plot(self):
         assert self.genetic_algorithm
@@ -95,7 +118,7 @@ class FunctionTuner:
             x=0.125, y=0.98, ha='left', fontsize=18
         )
         ax.set_title(
-            f'Hall of Fame:  {tuple(self.winner) if self.winner else ""}',
+            f'Hall of Fame:  {self.winner if self.winner else ""}',
             loc='left', fontsize=10, fontname='monospace',
         )
         ax.set_xlabel('Epoch')
