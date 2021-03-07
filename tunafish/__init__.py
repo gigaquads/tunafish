@@ -1,1 +1,1 @@
-from .tuner import FunctionTuner
+from .tuning.function_tuner import FunctionTuner

@@ -5,8 +5,8 @@ from inspect import Parameter
 
 import numpy as np
 
-from .genetic import GeneticAlgorithm
-from .spec import ParameterSpecification
+from .genetic_algorithm import GeneticAlgorithm
+from .parameter_specification import ParameterSpecification
 from .arguments import Arguments, KeywordArguments
 
 VAR_POSITIONAL = Parameter.VAR_POSITIONAL

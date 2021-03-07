@@ -13,7 +13,7 @@ import deap.creator
 import deap.tools
 import numpy as np
 
-from .spec import ParameterSpecification
+from .parameter_specification import ParameterSpecification
 from .arguments import Arguments
 
 
