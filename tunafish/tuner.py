@@ -27,6 +27,7 @@ class FunctionTuner:
         probabilities: Dict = GeneticAlgorithm.DEFAULT_PROBABILITIES,
         goal: Optional[float] = None,
         statistics: bool = False,
+        use_multiprocessing: bool = False,
     ):
         self.specs = []
         self.epochs = max(1, epochs)
@@ -35,7 +36,14 @@ class FunctionTuner:
         self.probabilities = probabilities
         self.are_statistics_enabled = statistics
         self.genetic_algorithm = None
+        self.use_multiprocessing = use_multiprocessing
         self.winner = None
+
+    @property
+    def epoch(self) -> int:
+        if self.genetic_algorithm:
+            return self.genetic_algorithm.epoch
+        return 0
 
     def tune(
         self,
@@ -70,6 +78,7 @@ class FunctionTuner:
             specs=self.specs,
             probabilities=self.probabilities,
             statistics=self.are_statistics_enabled,
+            use_multiprocessing=self.use_multiprocessing,
             use_kwargs=use_kwargs
         )
         self.population = self.genetic_algorithm.fit(

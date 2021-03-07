@@ -1,10 +1,11 @@
 import sys
 import random
-import inspect
+import os
 
+from multiprocessing import Pool
 from datetime import datetime
 from typing import (
-    Dict, List, Callable, Optional, Union, Sequence
+    Dict, List, Callable, Optional, Union, Sequence, Tuple
 )
 
 import deap.base
@@ -27,7 +28,7 @@ class GeneticAlgorithm:
 
     DEFAULT_PROBABILITIES: Dict = {
         'crossover': 0.5,
-        'mutation': 0.2
+        'mutation': 0.25,
     }
 
     def __init__(
@@ -35,23 +36,27 @@ class GeneticAlgorithm:
         specs: List[ParameterSpecification],
         probabilities: Dict = DEFAULT_PROBABILITIES,
         statistics: bool = False,
+        use_multiprocessing: bool = False,
         use_kwargs: bool = False,
     ):
         self.specs = specs
         self.keys = tuple(spec.name for spec in self.specs)
         self.probabilities = probabilities
-        self.toolbox = deap.base.Toolbox()
         self.objective: Optional[Callable] = None
         self.are_statistics_enabled = statistics
         self.statistics = None
         self.use_kwargs = use_kwargs
-        self.setup()
+        self.use_multiprocessing = use_multiprocessing
+        self.pool = None
+        self.epoch = 0
 
     def setup(self):
         """
         Initialize and register types and functions used internally by the
         Deap evolutionary computing framework.
         """
+        toolbox = deap.base.Toolbox()
+
         # define geap internal sub-classes
         deap.creator.create(
             'BasicFitness', deap.base.Fitness, weights=(1.0, )
@@ -60,35 +65,41 @@ class GeneticAlgorithm:
             'Individual', list, fitness=deap.creator.BasicFitness
         )
         # register our function that initializes each individual
-        self.toolbox.register(
+        toolbox.register(
             'initializer', self.initializer
         )
         # tell Geap how to generate an individual with our initializer
-        self.toolbox.register(
+        toolbox.register(
             'individual', deap.tools.initIterate, deap.creator.Individual,
-            self.toolbox.initializer,
+            toolbox.initializer,
         )
         # create an initial population using the registered "individual" func
-        self.toolbox.register(
+        toolbox.register(
             'population',
-            deap.tools.initRepeat, list, self.toolbox.individual
+            deap.tools.initRepeat, list, toolbox.individual
         )
         # tell geap how to select the best performing individuals each epoch
-        self.toolbox.register(
+        toolbox.register(
             'select', deap.tools.selTournament, tournsize=3
         )
         # tell geap how we want to perform genetic crossover
-        self.toolbox.register(
+        toolbox.register(
             'mate', deap.tools.cxTwoPoint
         )
         # set the mutation operation
-        self.toolbox.register(
+        toolbox.register(
             'mutate', deap.tools.mutGaussian, mu=0, sigma=1, indpb=0.1
         )
         # set our fitness function
-        self.toolbox.register(
-            'evaluate', lambda individual: (self.evaluate(individual), )
+        toolbox.register(
+            'evaluate', self.evaluate
         )
+
+        if self.use_multiprocessing:
+            pool = Pool(processes=max(1, os.cpu_count() or 1))
+            toolbox.register('map', pool.map)
+
+        return toolbox
 
     def fit(
         self,
@@ -102,7 +113,10 @@ class GeneticAlgorithm:
         float) of the objective function. The objective function's output is
         expected to be its fitness.
         """
+        toolbox = self.setup()
+
         self.objective = objective
+        self.epoch = 0
 
         # initialize a new statistics object
         if self.are_statistics_enabled:
@@ -116,7 +130,7 @@ class GeneticAlgorithm:
 
         # generate initial population
         if isinstance(population, int):
-            pop = self.toolbox.population(n=population)
+            pop = toolbox.population(n=population)
         else:
             assert isinstance(population, (list, tuple, set))
             pop = list(population)
@@ -125,34 +139,39 @@ class GeneticAlgorithm:
 
         # evolve the initial population....
         for epoch in range(epochs):
+            self.epoch = epoch
             print(f'Epoch {epoch}...') # TODO: replace with custom callback
             # generate next population from previous
             # using tournament selection
             offspring = list(
                 map(
-                    self.toolbox.clone,
-                    self.toolbox.select(pop, len(pop))
+                    toolbox.clone,
+                    toolbox.select(pop, len(pop))
                 )
             )
             # apply crossovers
             for siblings in zip(offspring[::2], offspring[1::2]):
                 if random.random() < self.probabilities['crossover']:
-                    self.toolbox.mate(*siblings)
+                    toolbox.mate(*siblings)
                     for child in siblings:
                         del child.fitness.values
 
             # apply mutations
             for child in offspring:
                 if random.random() < self.probabilities['mutation']:
-                    self.toolbox.mutate(child)
+                    toolbox.mutate(child)
                     del child.fitness.values
 
             # evaluate the fitness of each individual in need of it
             invalid_offspring = [x for x in offspring if not x.fitness.valid]
-            fitness_values = map(self.toolbox.evaluate, invalid_offspring)
+            fitness_values = toolbox.map(toolbox.evaluate, invalid_offspring)
             for child, fitness in zip(invalid_offspring, fitness_values):
                 child.fitness.values = fitness
                 if goal is not None and fitness[0] >= goal:
+                    is_goal_reached = True
+
+            for child in offspring:
+                if goal is not None and child.fitness.values[0] >= goal:
                     is_goal_reached = True
 
             # replace last generation with the next
@@ -217,7 +236,7 @@ class GeneticAlgorithm:
 
         return arg_list
 
-    def evaluate(self, individual: List) -> float:
+    def evaluate(self, individual: List) -> Tuple[float]:
         """
         Translate genetic algorithm individual into arguments with which to
         call the objective function (that we're optimizing), call it, and
@@ -231,4 +250,4 @@ class GeneticAlgorithm:
         else:
             args.fitness = self.objective(*args) or 0.0
 
-        return args.fitness
+        return (args.fitness, )

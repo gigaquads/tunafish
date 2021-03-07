@@ -31,7 +31,7 @@ if __name__ == '__main__':
         'male': {'dtype': bool}
     }
 
-    tuner = FunctionTuner(epochs=256, statistics=True)
+    tuner = FunctionTuner(epochs=256, statistics=True, use_multiprocessing=False)
     kwargs, time = TimeUtils.timed(lambda: tuner.tune(objective, options))
 
     print(f'Runtime: {time.total_seconds():.2f}s')
