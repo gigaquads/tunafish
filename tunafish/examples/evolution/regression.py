@@ -15,10 +15,22 @@ from tunafish import AutomaticFunction
 
 class SymbolicRegression(AutomaticFunction):
 
-    def signature(self, x: float) -> float:
+    def stub(self, x: float) -> float:
+        """
+        This defines the signature of the callable interface of
+        evolved SymbolicRegression instances. You wil do...
+
+        ```python
+        reg = SymbolicRegression(...)
+        y = reg(x)
+        ```
+        """
         raise NotImplemented
 
     def fitness(self, regression: Callable, x: Array) -> float:
+        """
+        Mean squared error. We're trying to minimize it.
+        """
         objective = self.context['objective']
         return np.mean(np.fromiter(
             ((regression(x_i) - objective(x_i))**2 for x_i in x), dtype=float
