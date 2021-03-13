@@ -17,8 +17,9 @@ class SymbolicRegression(AutomaticFunction):
 
     def stub(self, x: float) -> float:
         """
-        This defines the signature of the callable interface of
-        evolved SymbolicRegression instances. You wil do...
+        This defines the signature of the function to evolve. After a
+        SymbolicRegression instance evolves, we can access this interface via
+        self.__call__, like so:
 
         ```python
         reg = SymbolicRegression(...)
