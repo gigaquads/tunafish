@@ -72,6 +72,8 @@ if __name__ == '__main__':
         generations=100,
         context={'objective': objective},
         max_tree_height=2,
+        # NOTE: negative weight means we're minimizing the fitness value.
+        # by default, we maximizing the value.
         weight=-1.0,
     ).evolve(x)
 
