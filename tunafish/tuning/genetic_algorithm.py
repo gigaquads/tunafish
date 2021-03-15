@@ -58,20 +58,24 @@ class GeneticAlgorithm:
         toolbox = deap.base.Toolbox()
 
         # define geap internal sub-classes
-        deap.creator.create(
-            'BasicFitness', deap.base.Fitness, weights=(1.0, )
-        )
-        deap.creator.create(
-            'Individual', list, fitness=deap.creator.BasicFitness
-        )
+        if not hasattr(deap.creator, 'FunctionTunerFitness'):
+            deap.creator.create(
+                'FunctionTunerFitness', deap.base.Fitness, weights=(1.0, )
+            )
+        if not hasattr(deap.creator, 'FunctionTunerIndividual'):
+            deap.creator.create(
+                'FunctionTunerIndividual', list,
+                fitness=deap.creator.FunctionTunerFitness
+            )
+
         # register our function that initializes each individual
         toolbox.register(
             'initializer', self.initializer
         )
         # tell Geap how to generate an individual with our initializer
         toolbox.register(
-            'individual', deap.tools.initIterate, deap.creator.Individual,
-            toolbox.initializer,
+            'individual', deap.tools.initIterate,
+            deap.creator.FunctionTunerIndividual, toolbox.initializer,
         )
         # create an initial population using the registered "individual" func
         toolbox.register(
