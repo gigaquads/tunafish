@@ -54,9 +54,10 @@ class AutomaticFunction:
         self.population = None
         self.expressions = None
         self.winner = None
+        self.winner_expression = None
 
         # input_items are (arg_name, dtype) tuples...
-        sig = inspect.signature(self.signature)
+        sig = inspect.signature(self.stub)
         input_items = tuple(
             (k, v.annotation)
             for k, v in list(sig.parameters.items())
@@ -74,10 +75,16 @@ class AutomaticFunction:
         })
 
         # add self.functions to primitives
-        functions = self.functions or {
-            k[3:]: getattr(self, k) for k in dir(self)
-            if k.startswith('function_')
-        }
+        functions = self.functions
+        if not functions:
+            functions = {}
+            for k in dir(self):
+                if k.startswith('function_'):
+                    func = getattr(self, k)
+                    if callable(func):
+                        name = k[9:].upper()
+                        functions[name] = func
+
         for name, func in functions.items():
             sig = inspect.signature(func)
             params = get_required_parameters(sig)
@@ -114,7 +121,7 @@ class AutomaticFunction:
     def __call__(self, *args, **kwargs) -> Optional:
         return self.winner(*args, *kwargs) if self.winner else None
 
-    def signature(self, x: float) -> float:
+    def stub(self, x: float) -> float:
         raise NotImplementedError()
 
     def evolve(self, *args, **kwargs) -> 'AutomaticFunction':
@@ -211,6 +218,7 @@ class AutomaticFunction:
         ]
         # set the most fit individual (evolved function)
         self.winner = deap.gp.compile(hof[0], self.primitives)
+        self.winner_expression = hof[0]
 
         return self
 
@@ -237,6 +245,12 @@ class AutomaticFunction:
     @property
     def variables(self) -> Dict[Text, Callable]:
         return {}
+
+    @property
+    def source(self) -> Optional[str]:
+        return (
+            str(self.winner_expression) if self.winner_expression else None
+        )
 
     def fitness(self, func: Callable, *args, **kwargs) -> float:
         raise NotImplementedError()
