@@ -31,7 +31,7 @@ class AutomaticFunction:
         tournament_size: int = 3,
         crossover_rate: float = 0.5,
         mutation_rate: float = 0.1,
-        weights: Tuple[float] = (1.0, ),
+        weights: Optional[Tuple] = (1.0, ),
         weight: Optional[float] = None,
         verbose: bool = True,
         context: Dict = None,
@@ -44,10 +44,8 @@ class AutomaticFunction:
         self.tournament_size = clamp(tournament_size, 1, population // 2)
         self.crossover_rate = clamp(crossover_rate, 0.01, 1.0)
         self.mutation_rate = clamp(mutation_rate, 0.01, 1.0)
-        self.fitness_weights = weights
         self.verbose = verbose
         self.context = context or {}
-        self.fitness_weight = weight
 
         # vars set by self.evolve:
         self.logbook = None
@@ -55,6 +53,16 @@ class AutomaticFunction:
         self.expressions = None
         self.winner = None
         self.winner_expression = None
+
+
+        if weight is not None:
+            self.weights = (weight, )
+        else:
+            assert weights
+            if isinstance(weights, (list, np.ndarray)):
+                self.weights = tuple(weights)
+            else:
+                self.weights = weights
 
         # input_items are (arg_name, dtype) tuples...
         sig = inspect.signature(self.stub)
@@ -118,7 +126,7 @@ class AutomaticFunction:
             # import ipdb; ipdb.set_trace()
             self.primitives.addEphemeralConstant(name, func, ret_type)
 
-    def __call__(self, *args, **kwargs) -> Optional:
+    def __call__(self, *args, **kwargs):
         return self.winner(*args, *kwargs) if self.winner else None
 
     def stub(self, x: float) -> float:
@@ -127,16 +135,9 @@ class AutomaticFunction:
     def evolve(self, *args, **kwargs) -> 'AutomaticFunction':
         # register Deap internal classes
         if not hasattr(deap.creator, f'{self.class_name}Fitness'):
-            # if self.fitness_weight is non-None, then it takes precedence over
-            # fitness_weights (plural). this is because, most of the time,
-            # we're not doing multi-objective evolution.
-            if self.fitness_weight is not None:
-                weights = [self.fitness_weight]
-            else:
-                weights = self.fitness_weights
             deap.creator.create(
                 f'{self.class_name}Fitness', deap.base.Fitness,
-                weights=weights,
+                weights=self.weights,
             )
         deap.creator.create(
             f'{self.class_name}Individual', deap.gp.PrimitiveTree,
@@ -222,15 +223,14 @@ class AutomaticFunction:
 
         return self
 
-    def compile_and_evaluate(self, individual, args, kwargs) -> Tuple[float]:
+    def compile_and_evaluate(self, individual, args, kwargs) -> Tuple:
         evolved_func = deap.gp.compile(individual, self.primitives)
         fitness = self.fitness(evolved_func, *args, **kwargs)
         if isinstance(fitness, (int, float, np.number)):
             return (float(fitness), )
-        elif isinstance(fitness, list):
+        elif isinstance(fitness, (list, np.ndarray)):
             return tuple(fitness)
         else:
-            print(fitness, type(fitness))
             assert isinstance(fitness, tuple)
             return fitness
 
