@@ -56,7 +56,7 @@ class SymbolicRegression(AutomaticFunction):
         return math.sin(a)
 
     def function_cos(self, a: float) -> float:
-        return math.sin(a)
+        return math.cos(a)
 
     def var_random_float(self) -> float:
         return float(random.randint(-1, 1))

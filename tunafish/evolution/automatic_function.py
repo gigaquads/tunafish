@@ -2,7 +2,7 @@ import operator
 import inspect
 
 from multiprocessing import Pool
-from inspect import signature, _empty as empty
+from inspect import signature
 from typing import (
     Any, Dict, Callable, Union, Tuple, Text, Optional
 )
@@ -52,7 +52,9 @@ class AutomaticFunction:
         self.population = None
         self.expressions = None
         self.winner = None
+        self.winners = []
         self.winner_expression = None
+        self.winner_expressions = []
 
 
         if weight is not None:
@@ -63,6 +65,11 @@ class AutomaticFunction:
                 self.weights = tuple(weights)
             else:
                 self.weights = weights
+
+        self.unfit = tuple(
+            -np.inf if w >= 0 else np.inf
+            for w in self.weights
+        )
 
         # input_items are (arg_name, dtype) tuples...
         sig = inspect.signature(self.stub)
@@ -94,13 +101,7 @@ class AutomaticFunction:
                         functions[name] = func
 
         for name, func in functions.items():
-            sig = inspect.signature(func)
-            params = get_required_parameters(sig)
-            in_types = [p.annotation for p in params.values()]
-            ret_type = sig.return_annotation
-            self.primitives.addPrimitive(
-                func, in_types=in_types, ret_type=ret_type, name=name
-            )
+            self.register_function(func, name=name)
 
         # add constants to primitives
         constants = self.constants or {
@@ -129,10 +130,23 @@ class AutomaticFunction:
     def __call__(self, *args, **kwargs):
         return self.winner(*args, *kwargs) if self.winner else None
 
+    def register_function(self, func: Callable, name: str = None):
+        name = name or func.__name__
+        sig = inspect.signature(func)
+        params = get_required_parameters(sig)
+        in_types = [p.annotation for p in params.values()]
+        ret_type = sig.return_annotation
+        self.primitives.addPrimitive(
+            func, in_types=in_types, ret_type=ret_type, name=name
+        )
+
     def stub(self, x: float) -> float:
         raise NotImplementedError()
 
-    def evolve(self, *args, **kwargs) -> 'AutomaticFunction':
+    def setup(self, args=None, kwargs=None):
+        self.context['args'] = args or tuple()
+        self.context['kwargs'] = kwargs or {}
+
         # register Deap internal classes
         if not hasattr(deap.creator, f'{self.class_name}Fitness'):
             deap.creator.create(
@@ -188,6 +202,10 @@ class AutomaticFunction:
                 key=operator.attrgetter('height'), max_value=17
             )
         )
+        return toolbox
+
+    def evolve(self, *args, **kwargs) -> 'AutomaticFunction':
+        toolbox = self.setup(args, kwargs)
 
         # configure statistics for evolve loop
         stats_fit = deap.tools.Statistics(lambda ind: ind.fitness.values)
@@ -195,16 +213,16 @@ class AutomaticFunction:
         stats = deap.tools.MultiStatistics(
             fitness=stats_fit, size=stats_size
         )
-        stats.register('avg', np.mean)
-        stats.register('std', np.std)
-        stats.register('min', np.min)
-        stats.register('max', np.max)
+        stats.register('avg', np.nanmean)
+        stats.register('std', np.nanstd)
+        stats.register('min', np.nanmin)
+        stats.register('max', np.nanmax)
 
         # initialize generation 0
         pop = toolbox.population(n=self.n_population)
 
         # kick off the evolve loop...
-        hof = deap.tools.HallOfFame(1)
+        hof = deap.tools.HallOfFame(10)
         final_pop, self.logbook = deap.algorithms.eaSimple(
             pop, toolbox, self.crossover_rate, self.mutation_rate,
             self.n_generations, stats=stats, halloffame=hof,
@@ -218,8 +236,13 @@ class AutomaticFunction:
             for individual in final_pop
         ]
         # set the most fit individual (evolved function)
-        self.winner = deap.gp.compile(hof[0], self.primitives)
-        self.winner_expression = hof[0]
+        self.winner = deap.gp.compile(hof[-1], self.primitives)
+        self.winner_expression = hof[-1]
+        self.winner_expressions = list(hof)
+        self.winners = [
+            deap.gp.compile(expr, self.primitives)
+            for expr in hof
+        ]
 
         return self
 
@@ -233,6 +256,9 @@ class AutomaticFunction:
         else:
             assert isinstance(fitness, tuple)
             return fitness
+
+    def compile(self, individual) -> Callable:
+        return deap.gp.compile(individual, self.primitives)
 
     @property
     def functions(self) -> Dict[Text, Callable]:
@@ -248,11 +274,18 @@ class AutomaticFunction:
 
     @property
     def source(self) -> Optional[str]:
+        """
+        Return source code string of the evolution winner.
+        """
         return (
             str(self.winner_expression) if self.winner_expression else None
         )
 
-    def fitness(self, func: Callable, *args, **kwargs) -> float:
+    def fitness(self, func: Callable, *args, **kwargs):
+        """
+        Returns any of the following:
+        float, int, list, tuple, np.ndarray, np.number
+        """
         raise NotImplementedError()
 
 
