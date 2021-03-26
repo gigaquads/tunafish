@@ -1,5 +1,6 @@
 import operator
 import inspect
+import pickle
 
 from multiprocessing import Pool
 from inspect import signature
@@ -35,6 +36,7 @@ class AutomaticFunction:
         weight: Optional[float] = None,
         verbose: bool = True,
         context: Dict = None,
+        meta: dict = None,
     ):
         self.class_name = type(self).__name__
         self.n_generations = clamp(generations, 2, 100000)
@@ -46,6 +48,7 @@ class AutomaticFunction:
         self.mutation_rate = clamp(mutation_rate, 0.01, 1.0)
         self.verbose = verbose
         self.context = context or {}
+        self.meta = meta or {}
 
         # vars set by self.evolve:
         self.logbook = None
@@ -55,7 +58,6 @@ class AutomaticFunction:
         self.winners = []
         self.winner_expression = None
         self.winner_expressions = []
-
 
         if weight is not None:
             self.weights = (weight, )
@@ -288,4 +290,57 @@ class AutomaticFunction:
         """
         raise NotImplementedError()
 
+    def pickle(self, path: str, meta: dict = None, *args, **kwargs) -> dict:
+        if meta:
+            self.meta.update(meta)
+        data = {
+            # NOTE: we must store some fields as pickles inside the main pickle
+            # in order to accomodate limitations in unpickling Deap components.
+            'population': pickle.dumps(self.population),
+            'winners': pickle.dumps(self.winner_expressions),
 
+            'logbook': self.logbook,
+            'kwargs': {
+                'generations': self.n_generations,
+                'population': self.n_population,
+                'min_tree_height': self.min_tree_height,
+                'max_tree_height': self.max_tree_height,
+                'tournament_size': self.tournament_size,
+                'crossover_rate': self.crossover_rate,
+                'mutation_rate': self.mutation_rate,
+                'weights': self.weights,
+                'verbose': self.verbose,
+                'meta': self.meta,
+            }
+        }
+        with open(path, 'wb') as pickle_file:
+            pickle.dump(data, pickle_file)
+            return data
+
+    @classmethod
+    def unpickle(cls, path: str) -> 'AutomaticFunction':
+        with open(path, 'rb') as pickle_file:
+            state = pickle.load(pickle_file)
+            kwargs = state['kwargs']
+
+        func = cls(**kwargs)
+        func.setup()
+
+        # func.setup must be called before Deap components are unpickled. This
+        # forces us to store the "population" as a pickle inside the pickle
+        # itself -- so that we can unpickled it after calling setup.
+        population = pickle.loads(state['population'])
+        winner_expressions = pickle.loads(state['winners'])
+
+        expressions = [func.compile(x) for x in population]
+        winners = [func.compile(x) for x in winner_expressions]
+
+        func.logbook = state['logbook']
+        func.population = population
+        func.expressions = expressions
+        func.winner_expressions = winner_expressions
+        func.winner_expression = winner_expressions[-1]
+        func.winners = winners
+        func.winner = winners[-1]
+
+        return func
