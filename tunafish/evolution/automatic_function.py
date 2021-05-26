@@ -1,28 +1,42 @@
+"""
+class AutomaticFunction
+"""
+
 import operator
 import inspect
 import pickle
 
 from multiprocessing import Pool
-from inspect import signature
-from typing import (
-    Any, Dict, Callable, Union, Tuple, Text, Optional
-)
+from inspect import Signature, signature
+from typing import Dict, Callable, Text, Tuple, Optional, Any
 
+import numpy as np
 import deap.base
 import deap.creator
 import deap.tools
 import deap.gp
 import deap.algorithms
-import numpy as np
 
 from deap.gp import PrimitiveSetTyped
 
-from .util import (
+from tunafish.evolution.util import (
     clamp, get_required_parameters, is_parameter_required
 )
 
+# global args and kwargs are set by pool worker processes in their initializers.
+# this only happens when AutomaticFunction is instantiated with
+# multiprocessing=True.
+# ---------------------------------------
+GLOBAL_KWARGS = {}
+GLOBAL_ARGS = tuple()
+
 
 class AutomaticFunction:
+    """
+    An AutomaticFunction uses genetic programming to program itself according to
+    which inputs optimize its output, according to a fitness function.
+    """
+
     def __init__(
         self,
         generations: int = 64,
@@ -35,6 +49,7 @@ class AutomaticFunction:
         weights: Optional[Tuple] = (1.0, ),
         weight: Optional[float] = None,
         verbose: bool = True,
+        multiprocessing: bool = True,
         context: Dict = None,
         meta: dict = None,
     ):
@@ -49,6 +64,17 @@ class AutomaticFunction:
         self.verbose = verbose
         self.context = context or {}
         self.meta = meta or {}
+        self.primitives = None
+        self.registered_names = set()
+        self.use_multiprocessing = multiprocessing
+        self.deferred_primitives = {
+            'variables': [],
+            'constants': [],
+            'functions': [],
+        }
+
+        self.individual_class_name = f'{self.class_name}Individual'
+        self.fitness_class_name = f'{self.class_name}Fitness'
 
         # vars set by self.evolve:
         self.logbook = None
@@ -74,11 +100,15 @@ class AutomaticFunction:
         )
 
         # input_items are (arg_name, dtype) tuples...
-        sig = inspect.signature(self.stub)
+        if isinstance(self.stub, Signature):
+            sig = self.stub
+        else:
+            sig = inspect.signature(self.stub)
+
         input_items = tuple(
             (k, v.annotation)
             for k, v in list(sig.parameters.items())
-            if is_parameter_required(v)
+            if is_parameter_required(v) and k not in ('self', 'cls')
         )
         # create container for functions and terminals used by automatic_function
         self.primitives = PrimitiveSetTyped(
@@ -91,87 +121,115 @@ class AutomaticFunction:
             f'ARG{i}': item[0] for i, item in enumerate(input_items)
         })
 
-        # add self.functions to primitives
-        functions = self.functions
-        if not functions:
-            functions = {}
-            for k in dir(self):
-                if k.startswith('function_'):
-                    func = getattr(self, k)
-                    if callable(func):
-                        name = k[9:].upper()
-                        functions[name] = func
+        # register Deap internal classes
+        if not hasattr(deap.creator, self.fitness_class_name):
+            deap.creator.create(
+                f'{self.class_name}Fitness', deap.base.Fitness,
+                weights=self.weights,
+            )
 
-        for name, func in functions.items():
-            self.register_function(func, name=name)
-
-        # add constants to primitives
-        constants = self.constants or {
-            k[6:]: getattr(self, k) for k in dir(self)
-            if k.startswith('const_')
-        }
-        for name, func in constants.items():
-            value = func()
-            self.primitives.addTerminal(value, type(value), name=name)
-
-        # add variables (variables are callbacks that execute at runtime to
-        # generate a dynamic value). Deap calls these "ephemeral constants".
-        variables = self.variables or {
-            k[4:]: getattr(self, k) for k in dir(self)
-            if k.startswith('var_')
-        }
-        for name, func in variables.items():
-            if name == 'random':
-                # Deap breaks if the function's name is "random"
-                name = 'random_'
-            sig = signature(func)
-            ret_type = sig.return_annotation
-            # import ipdb; ipdb.set_trace()
-            self.primitives.addEphemeralConstant(name, func, ret_type)
+        if not hasattr(deap.creator, self.individual_class_name):
+            deap.creator.create(
+                self.individual_class_name, deap.gp.PrimitiveTree,
+                fitness=getattr(deap.creator, self.fitness_class_name),
+            )
 
     def __call__(self, *args, **kwargs):
         return self.winner(*args, *kwargs) if self.winner else None
 
-    def register_function(self, func: Callable, name: str = None):
+    def register_function(self, func: Callable, name: str = None) -> bool:
+        name = (name or func.__name__).upper()
+        if name in self.registered_names:
+            return False
+
+        if name.startswith('function_'):
+            name = name[9:]
+
+        if self.primitives is not None:
+            sig = inspect.signature(func)
+            params = get_required_parameters(sig)
+            in_types = [p.annotation for p in params.values()]
+            ret_type = sig.return_annotation
+            self.primitives.addPrimitive(
+                func, in_types=in_types, ret_type=ret_type, name=name
+            )
+        else:
+            self.deferred_primitives['functions'].append((func, name))
+
+        self.registered_names.add(name)
+        return True
+
+    def register_constant(self, func: Callable, name: str = None) -> bool:
         name = name or func.__name__
-        sig = inspect.signature(func)
-        params = get_required_parameters(sig)
-        in_types = [p.annotation for p in params.values()]
-        ret_type = sig.return_annotation
-        self.primitives.addPrimitive(
-            func, in_types=in_types, ret_type=ret_type, name=name
-        )
+        if name in self.registered_names:
+            return False
+        if name.startswith('const_'):
+            name = name[6:]
+
+        if self.primitives is not None:
+            value = func()
+            self.primitives.addTerminal(value, type(value), name=name)
+        else:
+            self.deferred_primitives['constants'].append((func, name))
+
+        self.registered_names.add(name)
+        return True
+
+    def register_variable(self, func: Callable, name: str = None) -> bool:
+        name = name or func.__name__
+        if name in self.registered_names:
+            return False
+        if name.startswith('var_'):
+            name = name[4:]
+
+        if self.primitives is not None:
+            sig = signature(func)
+            ret_type = sig.return_annotation
+            self.primitives.addEphemeralConstant(name, func, ret_type)
+        else:
+            self.deferred_primitives['variables'].append((func, name))
+
+        self.registered_names.add(name)
+        return True
 
     def stub(self, x: float) -> float:
         raise NotImplementedError()
 
     def setup(self, args=None, kwargs=None):
-        self.context['args'] = args or tuple()
-        self.context['kwargs'] = kwargs or {}
+        # add self.functions to primitives
+        for key, val in inspect.getmembers(self, callable):
+            prefix = key.split('_')[0].lower()
+            if prefix in ('func', 'function'):
+                self.register_function(val)
+            elif prefix == ('var', 'variable'):
+                self.register_variable(val)
+            elif prefix in ('const', 'constant'):
+                self.register_constant(val)
 
-        # register Deap internal classes
-        if not hasattr(deap.creator, f'{self.class_name}Fitness'):
-            deap.creator.create(
-                f'{self.class_name}Fitness', deap.base.Fitness,
-                weights=self.weights,
-            )
-        deap.creator.create(
-            f'{self.class_name}Individual', deap.gp.PrimitiveTree,
-            fitness=getattr(deap.creator, f'{self.class_name}Fitness')
-        )
-        # register Deap internal callbacks
+        for args in self.deferred_primitives['functions']:
+            self.register_function(*args)
+        for args in self.deferred_primitives['constants']:
+            self.register_constant(*args)
+        for args in self.deferred_primitives['variables']:
+            self.register_variable(*args)
+
         toolbox = deap.base.Toolbox()
+        # NOTE: toolbox must not be set on or stored in self, as it will cause
+        # problems internally to Deap in regards to pickling and
+        # multiprocessing.
+
         toolbox.register('expr',
             deap.gp.genHalfAndHalf, pset=self.primitives,
             min_=self.min_tree_height, max_=self.max_tree_height
         )
         toolbox.register('individual',
             deap.tools.initIterate,
-            getattr(deap.creator, f'{self.class_name}Individual'),
-            toolbox.expr
+            getattr(deap.creator, self.individual_class_name),
+            toolbox.expr  # pylint: disable=no-member
         )
         toolbox.register(
-            'population', deap.tools.initRepeat, list, toolbox.individual
+            'population', deap.tools.initRepeat, list,
+            toolbox.individual  # pylint: disable=no-member
         )
         toolbox.register(
             'compile', deap.gp.compile, pset=self.primitives
@@ -187,12 +245,26 @@ class AutomaticFunction:
             'expr_mut', deap.gp.genFull, min_=0, max_=self.max_tree_height
         )
         toolbox.register(
-            'mutate', deap.gp.mutUniform, expr=toolbox.expr_mut,
+            'mutate', deap.gp.mutUniform,
+            expr=toolbox.expr_mut,  # pylint: disable=no-member
             pset=self.primitives
         )
-        toolbox.register(
-            'evaluate', self.compile_and_evaluate, args=args, kwargs=kwargs
-        )
+        # for increased parallelism and speed...
+        if self.use_multiprocessing:
+            pool = Pool(
+                processes=8,
+                initializer=self.process_initializer,
+                initargs=(args, kwargs)
+            )
+            toolbox.register('map', pool.map)
+            toolbox.register(
+                'evaluate', self.compile_and_evaluate,
+            )
+        else:
+            toolbox.register(
+                'evaluate', self.compile_and_evaluate, args=args, kwargs=kwargs
+            )
+
         # set hard limit for total tree size to 17, as recommended by Koza
         toolbox.decorate(
             'mate', deap.gp.staticLimit(
@@ -204,9 +276,27 @@ class AutomaticFunction:
                 key=operator.attrgetter('height'), max_value=17
             )
         )
+
         return toolbox
 
+    @staticmethod
+    def process_initializer(args: tuple, kwargs: Dict):
+        """
+        This is the initializer method used by each worker process managed by
+        the process Pool. This method is responsible to sharing arguments to the
+        fitness function between processes without having to share them via
+        pickling, which is what Deap does otherwise, which can be very slow.
+        """
+        global GLOBAL_ARGS     # pylint: disable=global-statement
+        global GLOBAL_KWARGS   # pylint: disable=global-statement
+
+        GLOBAL_ARGS = args
+        GLOBAL_KWARGS = kwargs
+
     def evolve(self, *args, **kwargs) -> 'AutomaticFunction':
+        """
+        Train the AutomaticFunction by running genetic programming.
+        """
         toolbox = self.setup(args, kwargs)
 
         # configure statistics for evolve loop
@@ -221,8 +311,9 @@ class AutomaticFunction:
         stats.register('max', np.nanmax)
 
         # initialize generation 0
-        pop = toolbox.population(n=self.n_population)
-
+        pop = toolbox.population(  # pylint: disable=no-member
+            n=self.n_population
+        ) 
         # kick off the evolve loop...
         hof = deap.tools.HallOfFame(10)
         final_pop, self.logbook = deap.algorithms.eaSimple(
@@ -248,8 +339,10 @@ class AutomaticFunction:
 
         return self
 
-    def compile_and_evaluate(self, individual, args, kwargs) -> Tuple:
+    def compile_and_evaluate(self, individual, args=None, kwargs=None) -> Tuple:
         evolved_func = deap.gp.compile(individual, self.primitives)
+        args = args or GLOBAL_ARGS
+        kwargs = kwargs or GLOBAL_KWARGS
         fitness = self.fitness(evolved_func, *args, **kwargs)
         if isinstance(fitness, (int, float, np.number)):
             return (float(fitness), )
@@ -260,19 +353,12 @@ class AutomaticFunction:
             return fitness
 
     def compile(self, individual) -> Callable:
+        """
+        Public interface method for compiling a Deap individual into a lambda
+        function. This can be useful when exploring self.winner_expressions,
+        etc. at the end of an evolution/training.
+        """
         return deap.gp.compile(individual, self.primitives)
-
-    @property
-    def functions(self) -> Dict[Text, Callable]:
-        return {}
-
-    @property
-    def constants(self) -> Dict[Text, Any]:
-        return {}
-
-    @property
-    def variables(self) -> Dict[Text, Callable]:
-        return {}
 
     @property
     def source(self) -> Optional[str]:
@@ -283,14 +369,17 @@ class AutomaticFunction:
             str(self.winner_expression) if self.winner_expression else None
         )
 
-    def fitness(self, func: Callable, *args, **kwargs):
+    def fitness(self, individual: Callable, *args, **kwargs):
         """
         Returns any of the following:
         float, int, list, tuple, np.ndarray, np.number
         """
         raise NotImplementedError()
 
-    def pickle(self, path: str, meta: dict = None, *args, **kwargs) -> dict:
+    def pickle(self, path: str, meta: dict = None) -> dict:
+        """
+        Persist the AutomaticFunction's internal state as a pickled dict.
+        """
         if meta:
             self.meta.update(meta)
         data = {
@@ -318,13 +407,16 @@ class AutomaticFunction:
             return data
 
     @classmethod
-    def unpickle(cls, path: str) -> 'AutomaticFunction':
+    def unpickle(cls, path: str, *args, **kwargs) -> 'AutomaticFunction':
+        """
+        Unpickle a persisted AutomaticFunction state dict. See pickle method.
+        """
         with open(path, 'rb') as pickle_file:
             state = pickle.load(pickle_file)
-            kwargs = state['kwargs']
+            ctor_kwargs = state['kwargs']
 
-        func = cls(**kwargs)
-        func.setup()
+        func = cls(**ctor_kwargs)
+        func.setup(args=args, kwargs=kwargs)
 
         # func.setup must be called before Deap components are unpickled. This
         # forces us to store the "population" as a pickle inside the pickle
